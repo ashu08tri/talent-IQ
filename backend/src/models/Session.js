@@ -8,7 +8,7 @@ const sessionSchema = new Schema({
     },
     difficulty: {
         type: String,
-        enums: ["easy", "medium", "hard"],
+        enum: ["easy", "medium", "hard"],
         required: true
     },
     host: {

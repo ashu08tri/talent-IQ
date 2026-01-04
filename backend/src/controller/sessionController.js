@@ -3,7 +3,7 @@ import Session from '../models/Session.js';
 
 export async function createSession(req, res) {
     try {
-        const { problem, difficulty } = req.body()
+        const { problem, difficulty } = req.body
         const userId = req.user._id;
         const clerkId = req.user.clerkId;
 
@@ -20,29 +20,47 @@ export async function createSession(req, res) {
             callId
         });
 
+        // create Stream video call
+        try {
+            await streamClient.video.call("default", callId).getOrCreate({
+                data: {
+                    created_by_id: clerkId,
+                    custom: { problem, difficulty, sessionId: session._id.toString() }
+                }
+            });
+        } catch (err) {
+            console.error("Stream call creation failed:", err.message);
+            await Session.findByIdAndDelete(session._id);
+            return res.status(502).json({ msg: "Failed to create video session" });
+        }
 
-        //create Stream video call
-        await streamClient.video.call("default", callId).getOrCreate({
-            data: {
-                created_by_id: clerkId,
-                custom: { problem, difficulty, sessionId: session._id.toString() }
-            }
-        })
-
-        //chat messaging
+        // chat messaging
         const channel = chatClient.channel("messaging", callId, {
             name: `${problem} Session`,
             created_by_id: clerkId,
             members: [clerkId]
-        })
+        });
 
-        await channel.create();
+        try {
+            await channel.create();
+        } catch (err) {
+            console.error("Chat channel creation failed:", err.message);
 
-        res.status(201).json({ session })
+            try {
+                await streamClient.video.call("default", callId).delete();
+            } catch (cleanupErr) {
+                console.error("Stream cleanup failed:", cleanupErr.message);
+            }
+
+            await Session.findByIdAndDelete(session._id);
+            return res.status(502).json({ msg: "Failed to create chat session" });
+        }
+
+        res.status(201).json({ session });
 
     } catch (e) {
         console.error("Error in createSession Controller:", e.message);
-        res.status(500).json({ msg: "Internal server error!" })
+        res.status(500).json({ msg: "Internal server error!" });
     }
 }
 
@@ -105,15 +123,23 @@ export async function joinSession(req, res) {
 
         if (!session) return res.status(404).json({ msg: "Session not found!" });
 
-        if(session.participant) return res.status(404).json({ msg: "Session full!" });
+        if (session.status === "active") {
+            return res.status(400).json({ msg: "Cannot join a completed session!" })
+        }
+
+        if (session.host.toString() === userId.toString()) {
+            return res.status(400).json({ msg: "Host cannot join their own session!" });
+        }
+
+        if (session.participant) return res.status(409).json({ msg: "Session full!" });
 
         session.participant = userId,
-        await session.save();
+            await session.save();
 
         const channel = chatClient.channel("messaging", session.callId)
         await channel.addMembers([clerkId]);
 
-        res.status(200).json({session});
+        res.status(200).json({ session });
 
     } catch (e) {
         console.error("Error in joinSession controller:", e.message)
@@ -123,31 +149,31 @@ export async function joinSession(req, res) {
 
 export async function endSession(req, res) {
     try {
-        const {id} = req.params;
+        const { id } = req.params;
         const userId = req.user._id;
 
         const session = await Session.findById(id);
 
         if (!session) return res.status(404).json({ msg: "Session not found!" });
 
-        if(session.host.toString !== userId.toString()){
-            return res.status(403).json({msg: "Unathorized, Only host can end session!"})
+        if (session.host.toString() !== userId.toString()) {
+            return res.status(403).json({ msg: "Unathorized, Only host can end session!" })
         }
 
-        if(session.status === "completed") return res.status(400).json({msg: "Session is alreday cmopleted!"})
-
-        session.status = "completed"
-        await session.save();
+        if (session.status === "completed") return res.status(400).json({ msg: "Session is alreday completed!" })
 
         //Stream video call delete
         const call = streamClient.video.call("default", session.callId)
-        await call.delete({hard: true})
+        await call.delete({ hard: true })
 
         //Chat session delete
         const channel = chatClient.channel("messaging", session.callId)
         await channel.delete();
 
-        res.status(200).json({msg: "Session ended successfully!"})
+        session.status = "completed"
+        await session.save();
+
+        res.status(200).json({ msg: "Session ended successfully!" })
 
     } catch (e) {
         console.error("Error in endSession controller:", e.message)

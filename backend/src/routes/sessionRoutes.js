@@ -6,7 +6,7 @@ import { createSession, getActiveSessions, getRecentSessions,
 
 const router = express.Router();
 
-router.get('/', protectRoute, createSession);
+router.post('/', protectRoute, createSession);
 router.get('/active', protectRoute, getActiveSessions);
 router.get('/my-recent', protectRoute, getRecentSessions);
 
