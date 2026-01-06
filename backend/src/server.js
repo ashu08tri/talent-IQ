@@ -21,7 +21,7 @@ app.use(clerkMiddleware()); // this adds auth fields to objects: req.auth()
 //Routes
 app.use("/api/inngest", serve({client: inngest, functions}));
 app.use("/api/chat", chatRoutes);
-app.use("/api/session", sessionRoutes);
+app.use("/api/sessions", sessionRoutes);
 
 app.get('/health', (req, res) => {
     res.status(200).json({ msg: "Hello from server side!" })
